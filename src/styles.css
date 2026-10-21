@@ -88,3 +88,5 @@ figcaption{margin-top:10px;font-size:14px}.small{font-size:14px}
   .flower{width:56px!important;opacity:.85}
   .form-card{padding:22px}.card{padding:20px}.track span{font-size:24px}
 }
+
+.btn.stripe{background:#635BFF;color:#fff;font-size:22px;padding:18px 34px}.btn.stripe:hover{background:#4b43d6;color:#fff}

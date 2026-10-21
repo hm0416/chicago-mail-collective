@@ -1,0 +1,696 @@
+diff --git a/.env.example b/.env.example
+index 598936d..175cabb 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1,11 +1,16 @@
+ # Copy to .env (local) or add in your host's environment settings
+ VITE_EMAIL=trinitybrandt@gmail.com
+-VITE_VENMO_HANDLE=@YOUR-VENMO-HANDLE
+ VITE_INSTAGRAM_HANDLE=@YOUR-INSTAGRAM
+ VITE_INSTAGRAM_URL=https://www.instagram.com/
+-# Form service that receives sign-ups (e.g. https://formspree.io/f/xxxx). If empty, sign-ups open an email instead.
+-VITE_FORM_ENDPOINT=
+-# Server-side only (Netlify environment variables), used by netlify/functions/archive.js
++
++# Server-side only. Add these as Netlify environment variables; never put them in the browser code.
++# Stripe (card payments)
++# STRIPE_SECRET_KEY=sk_test_...
++# STRIPE_WEBHOOK_SECRET=whsec_...
++# Resend (emails you when someone pays)
++# RESEND_API_KEY=re_...
++# NOTIFY_EMAIL=hifamousou@gmail.com
++# Subscriber archive (paywall)
+ # SUBSCRIBER_CODE=pick-a-code
+ # ISSUE_1_PDF=https://...
+ # ISSUE_2_PDF=https://...
+diff --git a/README.md b/README.md
+index b25b3c7..d2074bc 100644
+--- a/README.md
++++ b/README.md
+@@ -12,7 +12,15 @@ React (Vite) + React Router. Pages: Home, About, Community & Artists, Subscribe,
+ 2. In Site settings → Environment variables, add the values from `.env.example`.
+ 
+ ## Make the pieces real
+-- **Sign-ups:** create a free form at formspree.io, paste its URL into `VITE_FORM_ENDPOINT`. Each sign-up (name, email, address) is emailed to you. Without it, the form opens an email to you instead.
+-- **Venmo:** set `VITE_VENMO_HANDLE`. Payments are manual: when a Venmo payment arrives, add the person to your mailing list. Venmo has no recurring-payment tool, so ask subscribers to send $10 every other month (or switch to Stripe later).
+ - **Paywall:** set `SUBSCRIBER_CODE` and `ISSUE_1_PDF`, `ISSUE_2_PDF` (links to the PDFs) as Netlify environment variables. The code is checked on the server (`netlify/functions/archive.js`), and the PDF links are only sent after it's right. Give the code to subscribers. Note: the story excerpts on the issue pages are public; only the PDFs are protected. Host the PDFs somewhere private, not linked elsewhere.
+ - **Placeholders to fill in:** Instagram handle (`.env`), Issue 1 date and the artist credits (`src/data.js`, `src/pages/Community.jsx`), Douglas Tsui's bio, sliding-scale tiers (`src/pages/Subscribe.jsx`), how contributors are paid (`src/pages/Community.jsx`).
++
++## Stripe (how people pay)
++Subscribers pay by card on Stripe's checkout page. Card subscribers are charged $10 every 2 months, and you get an email at hifamousou@gmail.com only after Stripe confirms the payment.
++1. Create a Stripe account (stripe.com). Stay in **Test mode** first.
++2. Developers → API keys: copy the **Secret key** into Netlify as `STRIPE_SECRET_KEY`.
++3. Developers → Webhooks → Add endpoint: URL `https://YOUR-SITE.netlify.app/.netlify/functions/stripe-webhook`, event `checkout.session.completed`. Copy its **Signing secret** into Netlify as `STRIPE_WEBHOOK_SECRET`.
++4. Sign up at resend.com **with hifamousou@gmail.com**, create an API key, and add it as `RESEND_API_KEY`. (Resend's free starter sender only delivers to the email you signed up with. To send elsewhere, verify a domain.)
++5. Redeploy (Deploys → Trigger deploy). Test with card `4242 4242 4242 4242`, any future date, any CVC.
++6. When it works, switch Stripe to **Live mode** and replace the two Stripe keys with the live ones.
++To let subscribers cancel, turn on the Customer portal in Stripe (Settings → Billing → Customer portal).
+diff --git a/netlify/functions/create-checkout.js b/netlify/functions/create-checkout.js
+new file mode 100644
+index 0000000..20bb2ac
+--- /dev/null
++++ b/netlify/functions/create-checkout.js
+@@ -0,0 +1,36 @@
++// Creates a Stripe Checkout session for a recurring $10 / every-2-months subscription.
++import Stripe from 'stripe'
++
++export default async (req) => {
++  if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 })
++  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
++  let b
++  try { b = await req.json() } catch { return Response.json({ error: 'bad request' }, { status: 400 }) }
++  if (!b.email || !b.first || !b.last || !b.a1 || !b.city || !b.st || !b.zip) {
++    return Response.json({ error: 'missing fields' }, { status: 400 })
++  }
++  const origin = process.env.URL || new URL(req.url).origin
++  try {
++    const session = await stripe.checkout.sessions.create({
++      mode: 'subscription',
++      customer_email: b.email,
++      line_items: [{
++        quantity: 1,
++        price_data: {
++          currency: 'usd',
++          unit_amount: 1000,
++          recurring: { interval: 'month', interval_count: 2 },
++          product_data: { name: 'Chicago Mail Collective: printed issue every other month' },
++        },
++      }],
++      metadata: { name: `${b.first} ${b.last}`, address: b.address || '' },
++      subscription_data: { metadata: { name: `${b.first} ${b.last}`, address: b.address || '' } },
++      success_url: `${origin}/subscribe/success`,
++      cancel_url: `${origin}/subscribe`,
++    })
++    return Response.json({ url: session.url })
++  } catch (err) {
++    console.error(err)
++    return Response.json({ error: 'stripe error' }, { status: 500 })
++  }
++}
+diff --git a/netlify/functions/stripe-webhook.js b/netlify/functions/stripe-webhook.js
+new file mode 100644
+index 0000000..102626d
+--- /dev/null
++++ b/netlify/functions/stripe-webhook.js
+@@ -0,0 +1,34 @@
++// Stripe calls this after a payment. A subscriber only counts once Stripe says they paid.
++import Stripe from 'stripe'
++
++export default async (req) => {
++  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
++  const raw = await req.text()
++  let event
++  try {
++    event = stripe.webhooks.constructEvent(raw, req.headers.get('stripe-signature'), process.env.STRIPE_WEBHOOK_SECRET)
++  } catch {
++    return new Response('Bad signature', { status: 400 })
++  }
++
++  if (event.type === 'checkout.session.completed' && event.data.object.payment_status === 'paid') {
++    const s = event.data.object
++    const to = process.env.NOTIFY_EMAIL || 'hifamousou@gmail.com'
++    const text = [
++      'New paid subscriber for the Chicago Mail Collective.',
++      '',
++      `Name: ${s.metadata?.name || ''}`,
++      `Email: ${s.customer_details?.email || s.customer_email || ''}`,
++      `Mailing address: ${s.metadata?.address || ''}`,
++      `Paid: $${(s.amount_total / 100).toFixed(2)} (recurring every 2 months)`,
++      `Stripe payment: ${s.id}`,
++    ].join('\n')
++    const r = await fetch('https://api.resend.com/emails', {
++      method: 'POST',
++      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
++      body: JSON.stringify({ from: 'Chicago Mail Collective <onboarding@resend.dev>', to: [to], subject: `New paid subscriber: ${s.metadata?.name || ''}`, text }),
++    })
++    if (!r.ok) return new Response('Email failed', { status: 500 }) // Stripe will retry
++  }
++  return new Response('ok')
++}
+diff --git a/package-lock.json b/package-lock.json
+index 66f0d12..2a439ba 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -10,7 +10,8 @@
+       "dependencies": {
+         "react": "^18.3.1",
+         "react-dom": "^18.3.1",
+-        "react-router-dom": "^6.26.2"
++        "react-router-dom": "^6.26.2",
++        "stripe": "^17.0.0"
+       },
+       "devDependencies": {
+         "@vitejs/plugin-react": "^4.3.1",
+@@ -1175,6 +1176,15 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/@types/node": {
++      "version": "26.6.5",
++      "resolved": "https://registry.npmjs.org/@types/node/-/node-26.6.5.tgz",
++      "integrity": "sha512-uMzsv9stDdofIZBx4UGh4Z9ZgXnGC9seRDscilBcTHAeOFk67MZg/k9bWVfO+bk4qZmG+l52hRnLwUiH2LnJTg==",
++      "license": "MIT",
++      "dependencies": {
++        "undici-types": "~8.9.0"
++      }
++    },
+     "node_modules/@vitejs/plugin-react": {
+       "version": "4.7.0",
+       "resolved": "https://registry.npmjs.org/@vitejs/plugin-react/-/plugin-react-4.7.0.tgz",
+@@ -1243,6 +1253,35 @@
+         "node": "^6 || ^7 || ^8 || ^9 || ^10 || ^11 || ^12 || >=13.7"
+       }
+     },
++    "node_modules/call-bind-apply-helpers": {
++      "version": "1.0.2",
++      "resolved": "https://registry.npmjs.org/call-bind-apply-helpers/-/call-bind-apply-helpers-1.0.2.tgz",
++      "integrity": "sha512-Sp1ablJ0ivDkSzjcaJdxEunN5/XvksFJ2sMBFfq6x0ryhQV/2b/KwFe21cMpmHtPOSij8K99/wSfoEuTObmuMQ==",
++      "license": "MIT",
++      "dependencies": {
++        "es-errors": "^1.3.0",
++        "function-bind": "^1.1.2"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      }
++    },
++    "node_modules/call-bound": {
++      "version": "1.0.4",
++      "resolved": "https://registry.npmjs.org/call-bound/-/call-bound-1.0.4.tgz",
++      "integrity": "sha512-+ys997U96po4Kx/ABpBCqhA9EuxJaQWDQg7295H4hBphv3IZg0boBKuwYpt4YXp6MZ5AmZQnU/tyMTlRpaSejg==",
++      "license": "MIT",
++      "dependencies": {
++        "call-bind-apply-helpers": "^1.0.2",
++        "get-intrinsic": "^1.3.0"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
+     "node_modules/caniuse-lite": {
+       "version": "1.0.30001817",
+       "resolved": "https://registry.npmjs.org/caniuse-lite/-/caniuse-lite-1.0.30001817.tgz",
+@@ -1289,6 +1328,20 @@
+         }
+       }
+     },
++    "node_modules/dunder-proto": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/dunder-proto/-/dunder-proto-1.0.1.tgz",
++      "integrity": "sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==",
++      "license": "MIT",
++      "dependencies": {
++        "call-bind-apply-helpers": "^1.0.1",
++        "es-errors": "^1.3.0",
++        "gopd": "^1.2.0"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      }
++    },
+     "node_modules/electron-to-chromium": {
+       "version": "1.5.462",
+       "resolved": "https://registry.npmjs.org/electron-to-chromium/-/electron-to-chromium-1.5.462.tgz",
+@@ -1296,6 +1349,36 @@
+       "dev": true,
+       "license": "ISC"
+     },
++    "node_modules/es-define-property": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/es-define-property/-/es-define-property-1.0.1.tgz",
++      "integrity": "sha512-e3nRfgfUZ4rNGL232gUgX06QNyyez04KdjFrF+LTRoOXmrOgFKDg4BCdsjW8EnT69eqdYGmRpJwiPVYNrCaW3g==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.4"
++      }
++    },
++    "node_modules/es-errors": {
++      "version": "1.3.0",
++      "resolved": "https://registry.npmjs.org/es-errors/-/es-errors-1.3.0.tgz",
++      "integrity": "sha512-Zf5H2Kxt2xjTvbJvP2ZWLEICxA6j+hAmMzIlypy4xcBg1vKVnx89Wy0GbS+kf5cwCVFFzdCFh2XSCFNULS6csw==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.4"
++      }
++    },
++    "node_modules/es-object-atoms": {
++      "version": "1.1.2",
++      "resolved": "https://registry.npmjs.org/es-object-atoms/-/es-object-atoms-1.1.2.tgz",
++      "integrity": "sha512-HWcBoN6NileqtSydK2FqHbS/LoDd2pqrnQHLyJzBj4kOp/ky2MWMN694xOfkK8/SnUsW2DH7EfyVlydKCsm1Zw==",
++      "license": "MIT",
++      "dependencies": {
++        "es-errors": "^1.3.0"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      }
++    },
+     "node_modules/esbuild": {
+       "version": "0.21.5",
+       "resolved": "https://registry.npmjs.org/esbuild/-/esbuild-0.21.5.tgz",
+@@ -1360,6 +1443,15 @@
+         "node": "^8.16.0 || ^10.6.0 || >=11.0.0"
+       }
+     },
++    "node_modules/function-bind": {
++      "version": "1.1.2",
++      "resolved": "https://registry.npmjs.org/function-bind/-/function-bind-1.1.2.tgz",
++      "integrity": "sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==",
++      "license": "MIT",
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
+     "node_modules/gensync": {
+       "version": "1.0.0-beta.2",
+       "resolved": "https://registry.npmjs.org/gensync/-/gensync-1.0.0-beta.2.tgz",
+@@ -1370,6 +1462,79 @@
+         "node": ">=6.9.0"
+       }
+     },
++    "node_modules/get-intrinsic": {
++      "version": "1.3.0",
++      "resolved": "https://registry.npmjs.org/get-intrinsic/-/get-intrinsic-1.3.0.tgz",
++      "integrity": "sha512-9fSjSaos/fRIVIp+xSJlE6lfwhES7LNtKaCBIamHsjr2na1BiABJPo0mOjjz8GJDURarmCPGqaiVg5mfjb98CQ==",
++      "license": "MIT",
++      "dependencies": {
++        "call-bind-apply-helpers": "^1.0.2",
++        "es-define-property": "^1.0.1",
++        "es-errors": "^1.3.0",
++        "es-object-atoms": "^1.1.1",
++        "function-bind": "^1.1.2",
++        "get-proto": "^1.0.1",
++        "gopd": "^1.2.0",
++        "has-symbols": "^1.1.0",
++        "hasown": "^2.0.2",
++        "math-intrinsics": "^1.1.0"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/get-proto": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/get-proto/-/get-proto-1.0.1.tgz",
++      "integrity": "sha512-sTSfBjoXBp89JvIKIefqw7U2CCebsc74kiY6awiGogKtoSGbgjYE/G/+l9sF3MWFPNc9IcoOC4ODfKHfxFmp0g==",
++      "license": "MIT",
++      "dependencies": {
++        "dunder-proto": "^1.0.1",
++        "es-object-atoms": "^1.0.0"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      }
++    },
++    "node_modules/gopd": {
++      "version": "1.2.0",
++      "resolved": "https://registry.npmjs.org/gopd/-/gopd-1.2.0.tgz",
++      "integrity": "sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/has-symbols": {
++      "version": "1.1.0",
++      "resolved": "https://registry.npmjs.org/has-symbols/-/has-symbols-1.1.0.tgz",
++      "integrity": "sha512-1cDNdwJ2Jaohmb3sg4OmKaMBwuC48sYni5HUw2DvsC8LjGTLK9h+eb1X6RyuOHe4hT0ULCW68iomhjUoKUqlPQ==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/hasown": {
++      "version": "2.0.4",
++      "resolved": "https://registry.npmjs.org/hasown/-/hasown-2.0.4.tgz",
++      "integrity": "sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==",
++      "license": "MIT",
++      "dependencies": {
++        "function-bind": "^1.1.2"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      }
++    },
+     "node_modules/js-tokens": {
+       "version": "4.0.0",
+       "resolved": "https://registry.npmjs.org/js-tokens/-/js-tokens-4.0.0.tgz",
+@@ -1424,6 +1589,15 @@
+         "yallist": "^3.0.2"
+       }
+     },
++    "node_modules/math-intrinsics": {
++      "version": "1.1.0",
++      "resolved": "https://registry.npmjs.org/math-intrinsics/-/math-intrinsics-1.1.0.tgz",
++      "integrity": "sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.4"
++      }
++    },
+     "node_modules/ms": {
+       "version": "2.1.3",
+       "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+@@ -1460,6 +1634,18 @@
+         "node": ">=18"
+       }
+     },
++    "node_modules/object-inspect": {
++      "version": "1.13.4",
++      "resolved": "https://registry.npmjs.org/object-inspect/-/object-inspect-1.13.4.tgz",
++      "integrity": "sha512-W67iLl4J2EXEGTbfeHCffrjDfitvLANg0UlX3wFUUSTx92KXRFegMHUVgSqE+wvhAbi4WqjGg9czysTV2Epbew==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
+     "node_modules/picocolors": {
+       "version": "1.1.1",
+       "resolved": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz",
+@@ -1496,6 +1682,22 @@
+         "node": "^10 || ^12 || >=14"
+       }
+     },
++    "node_modules/qs": {
++      "version": "6.16.1",
++      "resolved": "https://registry.npmjs.org/qs/-/qs-6.16.1.tgz",
++      "integrity": "sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==",
++      "license": "BSD-3-Clause",
++      "dependencies": {
++        "es-define-property": "^1.0.1",
++        "side-channel": "^1.1.1"
++      },
++      "engines": {
++        "node": ">=0.6"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
+     "node_modules/react": {
+       "version": "18.3.1",
+       "resolved": "https://registry.npmjs.org/react/-/react-18.3.1.tgz",
+@@ -1628,6 +1830,78 @@
+         "semver": "bin/semver.js"
+       }
+     },
++    "node_modules/side-channel": {
++      "version": "1.1.1",
++      "resolved": "https://registry.npmjs.org/side-channel/-/side-channel-1.1.1.tgz",
++      "integrity": "sha512-6x6dK6zJdpTzF4sQeNYxwtvBzf6Eg4GtlesS94HOvTudUeyK2WXAaIfmDgsyslYrRBeFIlsi54AYsFGUuhmvrQ==",
++      "license": "MIT",
++      "dependencies": {
++        "es-errors": "^1.3.0",
++        "object-inspect": "^1.13.4",
++        "side-channel-list": "^1.0.1",
++        "side-channel-map": "^1.0.1",
++        "side-channel-weakmap": "^1.0.2"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/side-channel-list": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/side-channel-list/-/side-channel-list-1.0.1.tgz",
++      "integrity": "sha512-mjn/0bi/oUURjc5Xl7IaWi/OJJJumuoJFQJfDDyO46+hBWsfaVM65TBHq2eoZBhzl9EchxOijpkbRC8SVBQU0w==",
++      "license": "MIT",
++      "dependencies": {
++        "es-errors": "^1.3.0",
++        "object-inspect": "^1.13.4"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/side-channel-map": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/side-channel-map/-/side-channel-map-1.0.1.tgz",
++      "integrity": "sha512-VCjCNfgMsby3tTdo02nbjtM/ewra6jPHmpThenkTYh8pG9ucZ/1P8So4u4FGBek/BjpOVsDCMoLA/iuBKIFXRA==",
++      "license": "MIT",
++      "dependencies": {
++        "call-bound": "^1.0.2",
++        "es-errors": "^1.3.0",
++        "get-intrinsic": "^1.2.5",
++        "object-inspect": "^1.13.3"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/side-channel-weakmap": {
++      "version": "1.0.2",
++      "resolved": "https://registry.npmjs.org/side-channel-weakmap/-/side-channel-weakmap-1.0.2.tgz",
++      "integrity": "sha512-WPS/HvHQTYnHisLo9McqBHOJk2FkHO/tlpvldyrnem4aeQp4hai3gythswg6p01oSoTl58rcpiFAjF2br2Ak2A==",
++      "license": "MIT",
++      "dependencies": {
++        "call-bound": "^1.0.2",
++        "es-errors": "^1.3.0",
++        "get-intrinsic": "^1.2.5",
++        "object-inspect": "^1.13.3",
++        "side-channel-map": "^1.0.1"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
+     "node_modules/source-map-js": {
+       "version": "1.2.2",
+       "resolved": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.2.tgz",
+@@ -1638,6 +1912,25 @@
+         "node": ">=0.10.0"
+       }
+     },
++    "node_modules/stripe": {
++      "version": "17.7.0",
++      "resolved": "https://registry.npmjs.org/stripe/-/stripe-17.7.0.tgz",
++      "integrity": "sha512-aT2BU9KkizY9SATf14WhhYVv2uOapBWX0OFWF4xvcj1mPaNotlSc2CsxpS4DS46ZueSppmCF5BX1sNYBtwBvfw==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/node": ">=8.1.0",
++        "qs": "^6.11.0"
++      },
++      "engines": {
++        "node": ">=12.*"
++      }
++    },
++    "node_modules/undici-types": {
++      "version": "8.9.0",
++      "resolved": "https://registry.npmjs.org/undici-types/-/undici-types-8.9.0.tgz",
++      "integrity": "sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==",
++      "license": "MIT"
++    },
+     "node_modules/update-browserslist-db": {
+       "version": "1.3.4",
+       "resolved": "https://registry.npmjs.org/update-browserslist-db/-/update-browserslist-db-1.3.4.tgz",
+diff --git a/package.json b/package.json
+index 44532cd..b61c024 100644
+--- a/package.json
++++ b/package.json
+@@ -3,7 +3,19 @@
+   "private": true,
+   "version": "1.0.0",
+   "type": "module",
+-  "scripts": { "dev": "vite", "build": "vite build", "preview": "vite preview" },
+-  "dependencies": { "react": "^18.3.1", "react-dom": "^18.3.1", "react-router-dom": "^6.26.2" },
+-  "devDependencies": { "@vitejs/plugin-react": "^4.3.1", "vite": "^5.4.8" }
+-}
++  "scripts": {
++    "dev": "vite",
++    "build": "vite build",
++    "preview": "vite preview"
++  },
++  "dependencies": {
++    "react": "^18.3.1",
++    "react-dom": "^18.3.1",
++    "react-router-dom": "^6.26.2",
++    "stripe": "^17.0.0"
++  },
++  "devDependencies": {
++    "@vitejs/plugin-react": "^4.3.1",
++    "vite": "^5.4.8"
++  }
++}
+\ No newline at end of file
+diff --git a/src/App.jsx b/src/App.jsx
+index cd9934f..53364a1 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -6,6 +6,7 @@ import Community from './pages/Community.jsx'
+ import Subscribe from './pages/Subscribe.jsx'
+ import Issues from './pages/Issues.jsx'
+ import Issue from './pages/Issue.jsx'
++import SubscribeSuccess from './pages/SubscribeSuccess.jsx'
+ 
+ export default function App() {
+   return (
+@@ -15,6 +16,7 @@ export default function App() {
+         <Route path="about" element={<About />} />
+         <Route path="community" element={<Community />} />
+         <Route path="subscribe" element={<Subscribe />} />
++        <Route path="subscribe/success" element={<SubscribeSuccess />} />
+         <Route path="issues" element={<Issues />} />
+         <Route path="issues/:id" element={<Issue />} />
+         <Route path="*" element={<Home />} />
+diff --git a/src/config.js b/src/config.js
+index fff5f80..ff45d2c 100644
+--- a/src/config.js
++++ b/src/config.js
+@@ -1,6 +1,5 @@
+ const e = import.meta.env
+ export const EMAIL = e.VITE_EMAIL || 'trinitybrandt@gmail.com'
+-export const VENMO = e.VITE_VENMO_HANDLE || '@YOUR-VENMO-HANDLE'
++export const PRICE = 10
+ export const INSTAGRAM = e.VITE_INSTAGRAM_HANDLE || '@YOUR-INSTAGRAM'
+ export const INSTAGRAM_URL = e.VITE_INSTAGRAM_URL || 'https://www.instagram.com/'
+-export const FORM_ENDPOINT = e.VITE_FORM_ENDPOINT || ''
+diff --git a/src/pages/Subscribe.jsx b/src/pages/Subscribe.jsx
+index d3c1619..bbac8ee 100644
+--- a/src/pages/Subscribe.jsx
++++ b/src/pages/Subscribe.jsx
+@@ -1,11 +1,12 @@
+ import { useState } from 'react'
+-import { EMAIL, VENMO, FORM_ENDPOINT } from '../config.js'
++import { EMAIL, PRICE } from '../config.js'
+ 
+ const empty = { first: '', last: '', email: '', a1: '', a2: '', city: '', st: '', zip: '' }
+ 
++// The subscriber fills in their info, then pays on Stripe's secure checkout page.
++// They are only subscribed once Stripe confirms the payment (see netlify/functions/stripe-webhook.js).
+ export default function Subscribe() {
+   const [f, setF] = useState(empty)
+-  const [sent, setSent] = useState(false)
+   const [busy, setBusy] = useState(false)
+   const [fail, setFail] = useState(false)
+   const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
+@@ -15,15 +16,11 @@ export default function Subscribe() {
+     e.preventDefault()
+     setBusy(true); setFail(false)
+     try {
+-      if (FORM_ENDPOINT) {
+-        const r = await fetch(FORM_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ ...f, address }) })
+-        if (!r.ok) throw new Error('bad response')
+-      } else {
+-        const body = `Name: ${f.first} ${f.last}\nEmail: ${f.email}\nAddress: ${address}`
+-        window.location.href = `mailto:${EMAIL}?subject=${encodeURIComponent('CMC subscription')}&body=${encodeURIComponent(body)}`
+-      }
+-      setSent(true)
+-    } catch { setFail(true) } finally { setBusy(false) }
++      const r = await fetch('/.netlify/functions/create-checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...f, address }) })
++      const { url } = await r.json()
++      if (!r.ok || !url) throw new Error('checkout')
++      window.location.href = url
++    } catch { setFail(true); setBusy(false) }
+   }
+ 
+   const field = (k, label, props = {}) => (
+@@ -36,36 +33,28 @@ export default function Subscribe() {
+       <h2>Subscribe</h2>
+       <div className="subscribe">
+         <div className="card form-card">
+-          {sent ? (
+-            <div className="stack">
+-              <h3 className="pink">Almost there, {f.first}!</h3>
+-              <p>Send your first $10 on Venmo to <strong>{VENMO}</strong> and write <strong>“CMC — {f.first} {f.last}”</strong> in the note. Once it lands, we’ll add {address} to the mailing list and send a confirmation to {f.email}.</p>
+-              <a className="btn dark" href="https://venmo.com/">Open Venmo</a>
++          <form className="stack" onSubmit={submit}>
++            <div className="row">
++              {field('first', 'First name', { input: { autoComplete: 'given-name' }, style: { flex: '1 1 200px' } })}
++              {field('last', 'Last name', { input: { autoComplete: 'family-name' }, style: { flex: '1 1 200px' } })}
+             </div>
+-          ) : (
+-            <form className="stack" onSubmit={submit}>
++            {field('email', 'Email', { input: { type: 'email', autoComplete: 'email' } })}
++            <fieldset className="stack">
++              <legend>Mailing address</legend>
++              {field('a1', 'Address line 1', { input: { autoComplete: 'address-line1' } })}
++              {field('a2', 'Address line 2 (apt, suite, unit; optional)', { optional: true, input: { autoComplete: 'address-line2' } })}
+               <div className="row">
+-                {field('first', 'First name', { input: { autoComplete: 'given-name' }, style: { flex: '1 1 200px' } })}
+-                {field('last', 'Last name', { input: { autoComplete: 'family-name' }, style: { flex: '1 1 200px' } })}
++                {field('city', 'City', { input: { autoComplete: 'address-level2' }, style: { flex: '2 1 200px' } })}
++                {field('st', 'State', { input: { autoComplete: 'address-level1' }, style: { flex: '1 1 90px' } })}
++                {field('zip', 'ZIP code', { input: { inputMode: 'numeric', autoComplete: 'postal-code' }, style: { flex: '1 1 120px' } })}
+               </div>
+-              {field('email', 'Email', { input: { type: 'email', autoComplete: 'email' } })}
+-              <fieldset className="stack">
+-                <legend>Mailing address</legend>
+-                {field('a1', 'Address line 1', { input: { autoComplete: 'address-line1' } })}
+-                {field('a2', 'Address line 2 (apt, suite, unit; optional)', { optional: true, input: { autoComplete: 'address-line2' } })}
+-                <div className="row">
+-                  {field('city', 'City', { input: { autoComplete: 'address-level2' }, style: { flex: '2 1 200px' } })}
+-                  {field('st', 'State', { input: { autoComplete: 'address-level1' }, style: { flex: '1 1 90px' } })}
+-                  {field('zip', 'ZIP code', { input: { inputMode: 'numeric', autoComplete: 'postal-code' }, style: { flex: '1 1 120px' } })}
+-                </div>
+-              </fieldset>
+-              <div className="note"><strong>Recurring payment every other month · $10 per issue</strong><br />Sliding scale: [ADD YOUR RANGE OR TIERS]. Paid through Venmo.</div>
+-              {fail && <p role="alert" className="error">Something went wrong sending that. Please try again or email {EMAIL}.</p>}
+-              <button className="btn pink-btn" disabled={busy}>{busy ? 'Sending…' : 'Join the mail club'}</button>
+-            </form>
+-          )}
++            </fieldset>
++            <div className="note"><strong>Recurring payment every other month · ${PRICE} per issue</strong><br />Sliding scale: [ADD YOUR RANGE OR TIERS]. You’ll pay securely by card on the next screen, powered by Stripe. You’re subscribed once your payment goes through, and you can cancel anytime.</div>
++            {fail && <p role="alert" className="error">Something went wrong starting checkout. Please try again or email {EMAIL}.</p>}
++            <button className="btn pink-btn" disabled={busy}>{busy ? 'One moment…' : 'Continue to secure payment'}</button>
++          </form>
+         </div>
+-        <div className="price"><p className="big">$10</p><p><strong>per issue, bi-monthly</strong></p><p>Custom printed. Mailed or shipped to you.</p></div>
++        <div className="price"><p className="big">${PRICE}</p><p><strong>per issue, bi-monthly</strong></p><p>Custom printed. Mailed or shipped to you.</p></div>
+       </div>
+     </section>
+   )
+diff --git a/src/pages/SubscribeSuccess.jsx b/src/pages/SubscribeSuccess.jsx
+new file mode 100644
+index 0000000..5ff3ecf
+--- /dev/null
++++ b/src/pages/SubscribeSuccess.jsx
+@@ -0,0 +1,12 @@
++import { Link } from 'react-router-dom'
++export default function SubscribeSuccess() {
++  return (
++    <section className="page narrow">
++      <h2>Thank you!</h2>
++      <div className="card">
++        <p>Your payment went through, and you’re now a subscriber of the Chicago Mail Collective. Stripe will email your receipt, and we’ll mail your first issue to the address you gave us.</p>
++        <p style={{ marginTop: 16 }}><Link to="/">← Back home</Link></p>
++      </div>
++    </section>
++  )
++}
+diff --git a/src/styles.css b/src/styles.css
+index b8c179d..20e96b5 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -88,3 +88,5 @@ figcaption{margin-top:10px;font-size:14px}.small{font-size:14px}
+   .flower{width:56px!important;opacity:.85}
+   .form-card{padding:22px}.card{padding:20px}.track span{font-size:24px}
+ }
++
++.btn.stripe{background:#635BFF;color:#fff;font-size:22px;padding:18px 34px}.btn.stripe:hover{background:#4b43d6;color:#fff}

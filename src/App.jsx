@@ -6,6 +6,7 @@ import Community from './pages/Community.jsx'
 import Subscribe from './pages/Subscribe.jsx'
 import Issues from './pages/Issues.jsx'
 import Issue from './pages/Issue.jsx'
+import SubscribeSuccess from './pages/SubscribeSuccess.jsx'
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
         <Route path="about" element={<About />} />
         <Route path="community" element={<Community />} />
         <Route path="subscribe" element={<Subscribe />} />
+        <Route path="subscribe/success" element={<SubscribeSuccess />} />
         <Route path="issues" element={<Issues />} />
         <Route path="issues/:id" element={<Issue />} />
         <Route path="*" element={<Home />} />
