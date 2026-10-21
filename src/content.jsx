@@ -50,7 +50,7 @@ export function ContentProvider({ children }) {
 
   const isAdmin = !!session
   return (
-    <Ctx.Provider value={{ content, ready, isAdmin, editMode: isAdmin && editMode, setEditMode, save, undo, canUndo: history.length > 0 }}>
+    <Ctx.Provider value={{ content, ready, isAdmin, session, editMode: isAdmin && editMode, setEditMode, save, undo, canUndo: history.length > 0 }}>
       {children}
     </Ctx.Provider>
   )

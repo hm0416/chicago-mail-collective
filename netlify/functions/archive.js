@@ -15,12 +15,21 @@ async function signedLink(id) {
   return signedURL ? `${SUPABASE_URL}/storage/v1${signedURL}` : ''
 }
 
+// Valid Supabase login token means an invited admin (sign-ups are disabled).
+async function isAdmin(token) {
+  const key = process.env.SUPABASE_SERVICE_KEY
+  if (!token || !key) return false
+  const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { Authorization: `Bearer ${token}`, apikey: key } })
+  return r.ok
+}
+
 export default async (req) => {
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 })
   let code = ''
-  try { code = (await req.json()).code || '' } catch {}
+  let token = ''
+  try { ({ code = '', token = '' } = await req.json()) } catch {}
   const secret = process.env.SUBSCRIBER_CODE
-  if (!secret || code.trim() !== secret) {
+  if (!(await isAdmin(token)) && (!secret || code.trim() !== secret)) {
     return Response.json({ error: 'invalid' }, { status: 401 })
   }
   const [a, b] = await Promise.all([signedLink(1), signedLink(2)])
