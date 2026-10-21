@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { EMAIL } from '../config.js'
+import { T } from '../content.jsx'
 
 const empty = { first: '', last: '', email: '', a1: '', a2: '', city: '', st: '', zip: '' }
 
@@ -31,7 +32,7 @@ export default function Subscribe() {
 
   return (
     <section className="page">
-      <h2>Subscribe</h2>
+      <T as="h2" k="subscribe.title">Subscribe</T>
       <div className="subscribe">
         <div className="card form-card">
           <form className="stack" onSubmit={submit}>
@@ -59,14 +60,14 @@ export default function Subscribe() {
                   </label>
                 ))}
               </div>
-              <p className="small" style={{ margin: 0 }}>Every tier gets the same printed issue. Pick what feels comfortable: the sliding scale helps make art more accessible and supports young artists.</p>
+              <T as="p" k="subscribe.tiernote" className="small" style={{ margin: 0 }}>Every tier gets the same printed issue. Pick what feels comfortable: the sliding scale helps make art more accessible and supports young artists.</T>
             </fieldset>
             <div className="note"><strong>Recurring payment every other month · ${amount} per issue</strong><br />You’ll pay securely by card on the next screen, powered by Stripe. You’re subscribed once your payment goes through, and you can cancel anytime.</div>
             {fail && <p role="alert" className="error">Something went wrong starting checkout. Please try again or email {EMAIL}.</p>}
             <button className="btn pink-btn" disabled={busy}>{busy ? 'One moment…' : 'Continue to secure payment'}</button>
           </form>
         </div>
-        <div className="price"><p className="big">${amount}</p><p><strong>per issue, bi-monthly</strong></p><p>Custom printed. Mailed or shipped to you.</p></div>
+        <div className="price"><p className="big">${amount}</p><p><T as="strong" k="subscribe.price1">per issue, bi-monthly</T></p><T as="p" k="subscribe.price2">Custom printed. Mailed or shipped to you.</T></div>
       </div>
     </section>
   )

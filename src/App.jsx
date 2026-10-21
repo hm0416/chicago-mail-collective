@@ -7,6 +7,7 @@ import Subscribe from './pages/Subscribe.jsx'
 import Issues from './pages/Issues.jsx'
 import Issue from './pages/Issue.jsx'
 import SubscribeSuccess from './pages/SubscribeSuccess.jsx'
+import Admin from './pages/Admin.jsx'
 
 export default function App() {
   return (
@@ -19,6 +20,7 @@ export default function App() {
         <Route path="subscribe/success" element={<SubscribeSuccess />} />
         <Route path="issues" element={<Issues />} />
         <Route path="issues/:id" element={<Issue />} />
+        <Route path="admin" element={<Admin />} />
         <Route path="*" element={<Home />} />
       </Route>
     </Routes>

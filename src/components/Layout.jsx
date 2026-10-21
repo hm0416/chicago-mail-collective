@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { EMAIL } from '../config.js'
+import { AdminBar, AdminLink, T, useText } from '../content.jsx'
 import logo from '../assets/logo_black.png'
 import flowerL from '../assets/flowerL.png'
 import flowerR from '../assets/flowerR.png'
@@ -14,13 +15,15 @@ const flowers = [
   [flowerL, 1700, 'left:5%', 90, 16], [flowerR, 1900, 'right:6%', 100, -15],
 ]
 const tabs = [['/', 'Home'], ['/about', 'About'], ['/community', 'Community & Artists'], ['/subscribe', 'Subscribe'], ['/issues', 'Past Issues']]
-const banner = 'Next issue release  ✿  Issue 3  ✿  anticipated shipping: January 2027  ✿  printed & mailed to your door  ✿  '
+const defaultBanner = 'Next issue release  ✿  Issue 3  ✿  anticipated shipping: January 2027  ✿  printed & mailed to your door  ✿  '
 
 export default function Layout() {
   const { pathname } = useLocation()
+  const banner = useText('banner', defaultBanner)
   useEffect(() => window.scrollTo(0, 0), [pathname])
   return (
     <div className="site">
+      <AdminBar />
       {flowers.map(([src, top, side, w, rot], i) => {
         const [k, v] = side.split(':')
         return <img key={i} className="flower" src={src} alt="" aria-hidden="true" style={{ top, [k]: v, width: w, transform: `rotate(${rot}deg)` }} />
@@ -39,9 +42,10 @@ export default function Layout() {
         </div>
         <main><Outlet /></main>
         <footer className="footer">
-          <p className="contact-label">Contact the editor</p>
+          <T as="p" k="footer.contact" className="contact-label">Contact the editor</T>
           <a className="contact-email" href={`mailto:${EMAIL}`}>{EMAIL}</a>
-          <p>Thank you for your support! Made in Chicago, mailed everywhere.</p>
+          <T as="p" k="footer.thanks">Thank you for your support! Made in Chicago, mailed everywhere.</T>
+          <AdminLink />
         </footer>
       </div>
     </div>

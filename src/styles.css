@@ -94,3 +94,14 @@ figcaption{margin-top:10px;font-size:14px}.small{font-size:14px}
 .tier{flex:1 1 90px;display:flex;align-items:center;justify-content:center;gap:10px;border:2px solid var(--ink);background:#fff;padding:14px;cursor:pointer;font-weight:700;font-size:22px}
 .tier.on{background:var(--ink);color:var(--cream)}
 .tier input{width:auto;min-width:0;padding:0;accent-color:var(--pink)}
+
+.editable{outline:2px dashed var(--pink);outline-offset:3px;cursor:text;min-width:1em}
+.editable:focus{outline-style:solid;background:rgba(255,210,63,.25)}
+.admin-bar{position:sticky;top:0;z-index:50;display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:10px 20px;background:var(--ink);color:var(--cream)}
+.admin-bar.on{background:var(--pink)}
+.admin-bar .btn{padding:8px 16px;min-height:40px;font-size:16px}
+.admin-banner{display:flex;gap:8px;align-items:center;flex:1 1 260px}
+.admin-banner input{flex:1;padding:6px 8px}
+.admin-link{font-size:13px;opacity:.6}
+.pdf-upload{display:flex;flex-direction:column;gap:6px;font-size:14px;margin:10px 0;padding:8px;border:2px dashed var(--pink)}
+.card.cream p{font-style:italic}
