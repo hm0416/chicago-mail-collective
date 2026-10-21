@@ -1,6 +1,8 @@
 import { createClient } from '@supabase/supabase-js'
 
 const e = import.meta.env
+// Read before createClient strips the auth tokens from the URL.
+export const arrivedViaInvite = /type=(invite|recovery)/.test(window.location.hash)
 // The anon key is public by design; row-level security protects writes.
 export const supabase = createClient(
   e.VITE_SUPABASE_URL || 'https://jytninegbyjqglowlfai.supabase.co',

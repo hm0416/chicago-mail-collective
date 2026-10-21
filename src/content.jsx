@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { supabase } from './supabase.js'
+import { supabase, arrivedViaInvite } from './supabase.js'
 
 const Ctx = createContext(null)
 export const useContent = () => useContext(Ctx)
@@ -70,7 +70,25 @@ export function T({ k, children, as: Tag = 'span', ...rest }) {
 
 export function AdminBar() {
   const { isAdmin, editMode, setEditMode, content, save } = useContent()
+  const [needsPassword, setNeedsPassword] = useState(arrivedViaInvite)
+  const [pw, setPw] = useState('')
+  const [err, setErr] = useState('')
   if (!isAdmin) return null
+  if (needsPassword) {
+    return (
+      <form className="admin-bar on" onSubmit={async (e) => {
+        e.preventDefault()
+        const { error } = await supabase.auth.updateUser({ password: pw })
+        if (error) setErr(error.message)
+        else { setNeedsPassword(false); setEditMode(true) }
+      }}>
+        <strong>Welcome! Choose a password:</strong>
+        <input type="password" minLength={8} required value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="new-password" />
+        <button className="btn yellow">Save password</button>
+        {err && <span>{err}</span>}
+      </form>
+    )
+  }
   return (
     <div className={'admin-bar' + (editMode ? ' on' : '')}>
       <button className="btn yellow" onClick={() => setEditMode(!editMode)}>{editMode ? 'Done editing' : 'Edit mode'}</button>
