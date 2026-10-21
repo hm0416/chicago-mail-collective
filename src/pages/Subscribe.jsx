@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { EMAIL, PRICE } from '../config.js'
+import { EMAIL } from '../config.js'
 
 const empty = { first: '', last: '', email: '', a1: '', a2: '', city: '', st: '', zip: '' }
 
@@ -7,6 +7,7 @@ const empty = { first: '', last: '', email: '', a1: '', a2: '', city: '', st: ''
 // They are only subscribed once Stripe confirms the payment (see netlify/functions/stripe-webhook.js).
 export default function Subscribe() {
   const [f, setF] = useState(empty)
+  const [amount, setAmount] = useState(10)
   const [busy, setBusy] = useState(false)
   const [fail, setFail] = useState(false)
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
@@ -16,7 +17,7 @@ export default function Subscribe() {
     e.preventDefault()
     setBusy(true); setFail(false)
     try {
-      const r = await fetch('/.netlify/functions/create-checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...f, address }) })
+      const r = await fetch('/.netlify/functions/create-checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...f, address, amount }) })
       const { url } = await r.json()
       if (!r.ok || !url) throw new Error('checkout')
       window.location.href = url
@@ -49,12 +50,23 @@ export default function Subscribe() {
                 {field('zip', 'ZIP code', { input: { inputMode: 'numeric', autoComplete: 'postal-code' }, style: { flex: '1 1 120px' } })}
               </div>
             </fieldset>
-            <div className="note"><strong>Recurring payment every other month · ${PRICE} per issue</strong><br />Sliding scale: [ADD YOUR RANGE OR TIERS]. You’ll pay securely by card on the next screen, powered by Stripe. You’re subscribed once your payment goes through, and you can cancel anytime.</div>
+            <fieldset className="stack">
+              <legend>Choose your price per issue (sliding scale)</legend>
+              <div className="tiers">
+                {[5, 10, 15].map((n) => (
+                  <label key={n} className={'tier' + (amount === n ? ' on' : '')}>
+                    <input type="radio" name="amount" value={n} checked={amount === n} onChange={() => setAmount(n)} />${n}
+                  </label>
+                ))}
+              </div>
+              <p className="small" style={{ margin: 0 }}>Every tier gets the same printed issue. Pick what feels comfortable: the sliding scale helps make art more accessible and supports young artists.</p>
+            </fieldset>
+            <div className="note"><strong>Recurring payment every other month · ${amount} per issue</strong><br />You’ll pay securely by card on the next screen, powered by Stripe. You’re subscribed once your payment goes through, and you can cancel anytime.</div>
             {fail && <p role="alert" className="error">Something went wrong starting checkout. Please try again or email {EMAIL}.</p>}
             <button className="btn pink-btn" disabled={busy}>{busy ? 'One moment…' : 'Continue to secure payment'}</button>
           </form>
         </div>
-        <div className="price"><p className="big">${PRICE}</p><p><strong>per issue, bi-monthly</strong></p><p>Custom printed. Mailed or shipped to you.</p></div>
+        <div className="price"><p className="big">${amount}</p><p><strong>per issue, bi-monthly</strong></p><p>Custom printed. Mailed or shipped to you.</p></div>
       </div>
     </section>
   )

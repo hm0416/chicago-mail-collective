@@ -13,10 +13,10 @@ React (Vite) + React Router. Pages: Home, About, Community & Artists, Subscribe,
 
 ## Make the pieces real
 - **Paywall:** set `SUBSCRIBER_CODE` and `ISSUE_1_PDF`, `ISSUE_2_PDF` (links to the PDFs) as Netlify environment variables. The code is checked on the server (`netlify/functions/archive.js`), and the PDF links are only sent after it's right. Give the code to subscribers. Note: the story excerpts on the issue pages are public; only the PDFs are protected. Host the PDFs somewhere private, not linked elsewhere.
-- **Placeholders to fill in:** Instagram handle (`.env`), Issue 1 date and the artist credits (`src/data.js`, `src/pages/Community.jsx`), Douglas Tsui's bio, sliding-scale tiers (`src/pages/Subscribe.jsx`), how contributors are paid (`src/pages/Community.jsx`).
+- **Placeholders to fill in:** Instagram handle (`.env`), Issue 1 date and the artist credits (`src/data.js`, `src/pages/Community.jsx`), Douglas Tsui's bio, how contributors are paid (`src/pages/Community.jsx`).
 
 ## Stripe (how people pay)
-Subscribers pay by card on Stripe's checkout page. Card subscribers are charged $10 every 2 months, and you get an email at hifamousou@gmail.com only after Stripe confirms the payment.
+Subscribers pay by card on Stripe's checkout page. Card subscribers are charged the sliding-scale amount they pick ($5, $10 or $15) every 2 months, and you get an email at hifamousou@gmail.com only after Stripe confirms the payment.
 1. Create a Stripe account (stripe.com). Stay in **Test mode** first.
 2. Developers → API keys: copy the **Secret key** into Netlify as `STRIPE_SECRET_KEY`.
 3. Developers → Webhooks → Add endpoint: URL `https://YOUR-SITE.netlify.app/.netlify/functions/stripe-webhook`, event `checkout.session.completed`. Copy its **Signing secret** into Netlify as `STRIPE_WEBHOOK_SECRET`.

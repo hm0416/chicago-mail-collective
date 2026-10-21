@@ -1,4 +1,4 @@
-// Creates a Stripe Checkout session for a recurring $10 / every-2-months subscription.
+// Creates a Stripe Checkout session for a recurring subscription (every 2 months) at the chosen sliding-scale price.
 import Stripe from 'stripe'
 
 export default async (req) => {
@@ -9,6 +9,8 @@ export default async (req) => {
   if (!b.email || !b.first || !b.last || !b.a1 || !b.city || !b.st || !b.zip) {
     return Response.json({ error: 'missing fields' }, { status: 400 })
   }
+  const amount = Number(b.amount)
+  if (![5, 10, 15].includes(amount)) return Response.json({ error: 'bad amount' }, { status: 400 }) // sliding scale: $5, $10 or $15
   const origin = process.env.URL || new URL(req.url).origin
   try {
     const session = await stripe.checkout.sessions.create({
@@ -18,7 +20,7 @@ export default async (req) => {
         quantity: 1,
         price_data: {
           currency: 'usd',
-          unit_amount: 1000,
+          unit_amount: amount * 100,
           recurring: { interval: 'month', interval_count: 2 },
           product_data: { name: 'Chicago Mail Collective: printed issue every other month' },
         },

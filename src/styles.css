@@ -90,3 +90,7 @@ figcaption{margin-top:10px;font-size:14px}.small{font-size:14px}
 }
 
 .btn.stripe{background:#635BFF;color:#fff;font-size:22px;padding:18px 34px}.btn.stripe:hover{background:#4b43d6;color:#fff}
+.tiers{display:flex;flex-wrap:wrap;gap:12px}
+.tier{flex:1 1 90px;display:flex;align-items:center;justify-content:center;gap:10px;border:2px solid var(--ink);background:#fff;padding:14px;cursor:pointer;font-weight:700;font-size:22px}
+.tier.on{background:var(--ink);color:var(--cream)}
+.tier input{width:auto;min-width:0;padding:0;accent-color:var(--pink)}

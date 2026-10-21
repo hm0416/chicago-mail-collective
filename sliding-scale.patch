@@ -1,0 +1,136 @@
+diff --git a/README.md b/README.md
+index d2074bc..20bba04 100644
+--- a/README.md
++++ b/README.md
+@@ -13,10 +13,10 @@ React (Vite) + React Router. Pages: Home, About, Community & Artists, Subscribe,
+ 
+ ## Make the pieces real
+ - **Paywall:** set `SUBSCRIBER_CODE` and `ISSUE_1_PDF`, `ISSUE_2_PDF` (links to the PDFs) as Netlify environment variables. The code is checked on the server (`netlify/functions/archive.js`), and the PDF links are only sent after it's right. Give the code to subscribers. Note: the story excerpts on the issue pages are public; only the PDFs are protected. Host the PDFs somewhere private, not linked elsewhere.
+-- **Placeholders to fill in:** Instagram handle (`.env`), Issue 1 date and the artist credits (`src/data.js`, `src/pages/Community.jsx`), Douglas Tsui's bio, sliding-scale tiers (`src/pages/Subscribe.jsx`), how contributors are paid (`src/pages/Community.jsx`).
++- **Placeholders to fill in:** Instagram handle (`.env`), Issue 1 date and the artist credits (`src/data.js`, `src/pages/Community.jsx`), Douglas Tsui's bio, how contributors are paid (`src/pages/Community.jsx`).
+ 
+ ## Stripe (how people pay)
+-Subscribers pay by card on Stripe's checkout page. Card subscribers are charged $10 every 2 months, and you get an email at hifamousou@gmail.com only after Stripe confirms the payment.
++Subscribers pay by card on Stripe's checkout page. Card subscribers are charged the sliding-scale amount they pick ($5, $10 or $15) every 2 months, and you get an email at hifamousou@gmail.com only after Stripe confirms the payment.
+ 1. Create a Stripe account (stripe.com). Stay in **Test mode** first.
+ 2. Developers → API keys: copy the **Secret key** into Netlify as `STRIPE_SECRET_KEY`.
+ 3. Developers → Webhooks → Add endpoint: URL `https://YOUR-SITE.netlify.app/.netlify/functions/stripe-webhook`, event `checkout.session.completed`. Copy its **Signing secret** into Netlify as `STRIPE_WEBHOOK_SECRET`.
+diff --git a/netlify/functions/create-checkout.js b/netlify/functions/create-checkout.js
+index 20bb2ac..6142193 100644
+--- a/netlify/functions/create-checkout.js
++++ b/netlify/functions/create-checkout.js
+@@ -1,4 +1,4 @@
+-// Creates a Stripe Checkout session for a recurring $10 / every-2-months subscription.
++// Creates a Stripe Checkout session for a recurring subscription (every 2 months) at the chosen sliding-scale price.
+ import Stripe from 'stripe'
+ 
+ export default async (req) => {
+@@ -9,6 +9,8 @@ export default async (req) => {
+   if (!b.email || !b.first || !b.last || !b.a1 || !b.city || !b.st || !b.zip) {
+     return Response.json({ error: 'missing fields' }, { status: 400 })
+   }
++  const amount = Number(b.amount)
++  if (![5, 10, 15].includes(amount)) return Response.json({ error: 'bad amount' }, { status: 400 }) // sliding scale: $5, $10 or $15
+   const origin = process.env.URL || new URL(req.url).origin
+   try {
+     const session = await stripe.checkout.sessions.create({
+@@ -18,7 +20,7 @@ export default async (req) => {
+         quantity: 1,
+         price_data: {
+           currency: 'usd',
+-          unit_amount: 1000,
++          unit_amount: amount * 100,
+           recurring: { interval: 'month', interval_count: 2 },
+           product_data: { name: 'Chicago Mail Collective: printed issue every other month' },
+         },
+diff --git a/src/config.js b/src/config.js
+index ff45d2c..6e227f0 100644
+--- a/src/config.js
++++ b/src/config.js
+@@ -1,5 +1,4 @@
+ const e = import.meta.env
+ export const EMAIL = e.VITE_EMAIL || 'trinitybrandt@gmail.com'
+-export const PRICE = 10
+ export const INSTAGRAM = e.VITE_INSTAGRAM_HANDLE || '@YOUR-INSTAGRAM'
+ export const INSTAGRAM_URL = e.VITE_INSTAGRAM_URL || 'https://www.instagram.com/'
+diff --git a/src/pages/Home.jsx b/src/pages/Home.jsx
+index ca4cd59..0734a91 100644
+--- a/src/pages/Home.jsx
++++ b/src/pages/Home.jsx
+@@ -4,8 +4,8 @@ export default function Home() {
+     <section className="hero">
+       <p className="eyebrow">Short stories by Chicagoans · In your mailbox</p>
+       <h1>Join our mail club!</h1>
+-      <p className="lede">A Chicago newsletter of short stories written by local Chicagoans, custom printed and mailed to you. $10 an issue, on a sliding scale.</p>
+-      <Link className="btn dark" to="/subscribe">Subscribe — $10 / issue</Link>
++      <p className="lede">A Chicago newsletter of short stories written by local Chicagoans, custom printed and mailed to you. $5, $10 or $15 an issue, on a sliding scale.</p>
++      <Link className="btn dark" to="/subscribe">Subscribe</Link>
+     </section>
+   )
+ }
+diff --git a/src/pages/Subscribe.jsx b/src/pages/Subscribe.jsx
+index bbac8ee..3fc472d 100644
+--- a/src/pages/Subscribe.jsx
++++ b/src/pages/Subscribe.jsx
+@@ -1,5 +1,5 @@
+ import { useState } from 'react'
+-import { EMAIL, PRICE } from '../config.js'
++import { EMAIL } from '../config.js'
+ 
+ const empty = { first: '', last: '', email: '', a1: '', a2: '', city: '', st: '', zip: '' }
+ 
+@@ -7,6 +7,7 @@ const empty = { first: '', last: '', email: '', a1: '', a2: '', city: '', st: ''
+ // They are only subscribed once Stripe confirms the payment (see netlify/functions/stripe-webhook.js).
+ export default function Subscribe() {
+   const [f, setF] = useState(empty)
++  const [amount, setAmount] = useState(10)
+   const [busy, setBusy] = useState(false)
+   const [fail, setFail] = useState(false)
+   const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
+@@ -16,7 +17,7 @@ export default function Subscribe() {
+     e.preventDefault()
+     setBusy(true); setFail(false)
+     try {
+-      const r = await fetch('/.netlify/functions/create-checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...f, address }) })
++      const r = await fetch('/.netlify/functions/create-checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...f, address, amount }) })
+       const { url } = await r.json()
+       if (!r.ok || !url) throw new Error('checkout')
+       window.location.href = url
+@@ -49,12 +50,23 @@ export default function Subscribe() {
+                 {field('zip', 'ZIP code', { input: { inputMode: 'numeric', autoComplete: 'postal-code' }, style: { flex: '1 1 120px' } })}
+               </div>
+             </fieldset>
+-            <div className="note"><strong>Recurring payment every other month · ${PRICE} per issue</strong><br />Sliding scale: [ADD YOUR RANGE OR TIERS]. You’ll pay securely by card on the next screen, powered by Stripe. You’re subscribed once your payment goes through, and you can cancel anytime.</div>
++            <fieldset className="stack">
++              <legend>Choose your price per issue (sliding scale)</legend>
++              <div className="tiers">
++                {[5, 10, 15].map((n) => (
++                  <label key={n} className={'tier' + (amount === n ? ' on' : '')}>
++                    <input type="radio" name="amount" value={n} checked={amount === n} onChange={() => setAmount(n)} />${n}
++                  </label>
++                ))}
++              </div>
++              <p className="small" style={{ margin: 0 }}>Every tier gets the same printed issue. Pick what feels comfortable: the sliding scale helps make art more accessible and supports young artists.</p>
++            </fieldset>
++            <div className="note"><strong>Recurring payment every other month · ${amount} per issue</strong><br />You’ll pay securely by card on the next screen, powered by Stripe. You’re subscribed once your payment goes through, and you can cancel anytime.</div>
+             {fail && <p role="alert" className="error">Something went wrong starting checkout. Please try again or email {EMAIL}.</p>}
+             <button className="btn pink-btn" disabled={busy}>{busy ? 'One moment…' : 'Continue to secure payment'}</button>
+           </form>
+         </div>
+-        <div className="price"><p className="big">${PRICE}</p><p><strong>per issue, bi-monthly</strong></p><p>Custom printed. Mailed or shipped to you.</p></div>
++        <div className="price"><p className="big">${amount}</p><p><strong>per issue, bi-monthly</strong></p><p>Custom printed. Mailed or shipped to you.</p></div>
+       </div>
+     </section>
+   )
+diff --git a/src/styles.css b/src/styles.css
+index 20e96b5..587b42f 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -90,3 +90,7 @@ figcaption{margin-top:10px;font-size:14px}.small{font-size:14px}
+ }
+ 
+ .btn.stripe{background:#635BFF;color:#fff;font-size:22px;padding:18px 34px}.btn.stripe:hover{background:#4b43d6;color:#fff}
++.tiers{display:flex;flex-wrap:wrap;gap:12px}
++.tier{flex:1 1 90px;display:flex;align-items:center;justify-content:center;gap:10px;border:2px solid var(--ink);background:#fff;padding:14px;cursor:pointer;font-weight:700;font-size:22px}
++.tier.on{background:var(--ink);color:var(--cream)}
++.tier input{width:auto;min-width:0;padding:0;accent-color:var(--pink)}
