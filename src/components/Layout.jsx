@@ -15,11 +15,11 @@ const flowers = [
   [flowerL, 1700, 'left:5%', 90, 16], [flowerR, 1900, 'right:6%', 100, -15],
 ]
 const tabs = [['/', 'Home'], ['/about', 'About'], ['/community', 'Community & Artists'], ['/subscribe', 'Subscribe'], ['/issues', 'Past Issues']]
-const defaultBanner = 'Next issue release  ✿  Issue 3  ✿  anticipated shipping: January 2027  ✿  printed & mailed to your door  ✿  '
-
 export default function Layout() {
   const { pathname } = useLocation()
-  const banner = useText('banner', defaultBanner)
+  const issueNo = useText('banner.issue', '3')
+  const shipDate = useText('banner.date', 'January 2027')
+  const banner = `Next issue release  ✿  Issue ${issueNo}  ✿  anticipated shipping: ${shipDate}  ✿  printed & mailed to your door  ✿  `
   useEffect(() => window.scrollTo(0, 0), [pathname])
   return (
     <div className="site">
@@ -37,7 +37,7 @@ export default function Layout() {
             ))}
           </nav>
         </header>
-        <div className="marquee" aria-label="Next issue release: Issue 3, anticipated shipping January 2027">
+        <div className="marquee" aria-label={`Next issue release: Issue ${issueNo}, anticipated shipping ${shipDate}`}>
           <div className="track" aria-hidden="true"><span>{banner.repeat(2)}</span><span>{banner.repeat(2)}</span></div>
         </div>
         <main><Outlet /></main>

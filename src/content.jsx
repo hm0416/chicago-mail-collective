@@ -10,6 +10,7 @@ export function ContentProvider({ children }) {
   const [ready, setReady] = useState(false)
   const [session, setSession] = useState(null)
   const [editMode, setEditMode] = useState(false)
+  const [history, setHistory] = useState([])
 
   useEffect(() => {
     let alive = true
@@ -28,15 +29,28 @@ export function ContentProvider({ children }) {
     return () => { alive = false; supabase.removeChannel(ch); sub.subscription.unsubscribe() }
   }, [])
 
-  async function save(key, value) {
+  async function write(key, value) {
     setContent((c) => ({ ...c, [key]: value }))
     const { error } = await supabase.from('content').upsert({ key, value })
     if (error) alert('Could not save: ' + error.message)
   }
 
+  // prev is the text shown before the edit, so undo can restore it.
+  function save(key, value, prev) {
+    if (prev !== undefined) setHistory((h) => [...h, { key, prev }])
+    return write(key, value)
+  }
+
+  function undo() {
+    const last = history[history.length - 1]
+    if (!last) return
+    setHistory((h) => h.slice(0, -1))
+    write(last.key, last.prev)
+  }
+
   const isAdmin = !!session
   return (
-    <Ctx.Provider value={{ content, ready, isAdmin, editMode: isAdmin && editMode, setEditMode, save }}>
+    <Ctx.Provider value={{ content, ready, isAdmin, editMode: isAdmin && editMode, setEditMode, save, undo, canUndo: history.length > 0 }}>
       {children}
     </Ctx.Provider>
   )
@@ -62,14 +76,14 @@ export function T({ k, children, as: Tag = 'span', ...rest }) {
       onClick={(e) => e.preventDefault()}
       onBlur={(e) => {
         const next = e.currentTarget.innerText.replace(/\n+$/, '')
-        if (next !== value) save(k, next)
+        if (next !== value) save(k, next, value)
       }}
     >{value}</Tag>
   )
 }
 
 export function AdminBar() {
-  const { isAdmin, editMode, setEditMode, content, save } = useContent()
+  const { isAdmin, editMode, setEditMode, content, save, undo, canUndo } = useContent()
   const [needsPassword, setNeedsPassword] = useState(arrivedViaInvite)
   const [pw, setPw] = useState('')
   const [err, setErr] = useState('')
@@ -94,10 +108,16 @@ export function AdminBar() {
       <button className="btn yellow" onClick={() => setEditMode(!editMode)}>{editMode ? 'Done editing' : 'Edit mode'}</button>
       <span>{editMode ? 'Editing: click any text to change it. Changes save when you click away.' : 'Logged in as admin'}</span>
       {editMode && (
-        <label className="admin-banner">Banner:
-          <input defaultValue={content.banner ?? ''} placeholder="Scrolling banner text" onBlur={(e) => e.target.value !== (content.banner ?? '') && save('banner', e.target.value)} />
-        </label>
+        <>
+          <label className="admin-banner">Banner issue #:
+            <input defaultValue={content['banner.issue'] ?? '3'} onBlur={(e) => e.target.value !== (content['banner.issue'] ?? '3') && save('banner.issue', e.target.value, content['banner.issue'] ?? '3')} />
+          </label>
+          <label className="admin-banner">Banner ship date:
+            <input defaultValue={content['banner.date'] ?? 'January 2027'} onBlur={(e) => e.target.value !== (content['banner.date'] ?? 'January 2027') && save('banner.date', e.target.value, content['banner.date'] ?? 'January 2027')} />
+          </label>
+        </>
       )}
+      {editMode && <button className="btn" onClick={undo} disabled={!canUndo}>Undo</button>}
       <button className="btn" onClick={() => supabase.auth.signOut()}>Log out</button>
     </div>
   )
